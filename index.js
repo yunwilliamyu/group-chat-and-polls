@@ -11,12 +11,12 @@ io.sockets.on('connection', function(socket) {
     socket.on('username', function(username) {
         socket.username = username;
         io.emit('is_online', '🔵 <i><span class="usernames">' + socket.username + '</span> joined the chat..</i>');
-        console.log(socket.handshake.headers["x-real-ip"] + ': ' + socket.username + " joined");
+        console.log(socket.request.connection.remoteAddress + "/" + socket.handshake.headers["x-real-ip"] + ': ' + socket.username + " joined");
     });
 
     socket.on('chat_message', function(message) {
         io.emit('chat_message', message.name + ": " + message.message);
-        console.log(socket.handshake.headers["x-real-ip"] + ': ' + message.name + ": " + message.message.replace(/(\r\n|\r|\n)/g, '\\n'));
+        console.log(socket.request.connection.remoteAddress + "/" + socket.handshake.headers["x-real-ip"] + ': ' + message.name + ": " + message.message.replace(/(\r\n|\r|\n)/g, '\\n'));
     });
 
 });
