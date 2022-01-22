@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html>
+  <head>
+      <meta name="viewport" content="width=device-width, user-scalable=no">
+      <title>Group Chat and Polls</title>
+    <style type="text/css" id="mystyles">
+        html {width: 100%; margin:0; padding: 0;}
+        body {font: 13px Helvetica; width: 100%; padding-left: 0.2em; padding-top: 0.2em; padding-right: 0.2em;}
+        textarea#txt { border-style: solid; border-width: 1px; padding: 10px; width: 100%; margin-right: .5%; }
+        #messages { list-style-type: none; margin: 0; padding: 0; }
+        #msgbox {height: 35em; resize: both; width:100%; overflow-y:auto; overflow-x:hidden; border: 1px black solid;}
+        #messages li { padding: 5px 10px; }
+        #messages li:nth-child(odd) { background: #eee; }
+        .usernames {color: red; }
+        #quickbuttons form {display: inline-block; width: 12%; height: 4em; }
+        #floating_container {position: relative; top: -1em; margin-left:1em; margin-right:1em; margin-bottom: -25px; height: 25px; font: 20px Helvetica;}
+        #floating_container div {position:relative; left: 50%; transform: translateX(-50%); margin:auto; text-align: center;}
+    </style>
+<style type="text/css" id="js_rules">
+.usernames {background-color: transparent; }
+</style>
+<style type="text/css" id="js_rules2">
+li.singleton {display: list-item; }
+</style>
+    <script src="../../socket.io/socket.io.js"></script>
+    <script src="https://code.jquery.com/jquery-1.10.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script>
+MathJax = {
+    tex: {
+        inlineMath: [['$$', '$$'], ['\\(', '\\)'] ],
+        displayMath: [['\\\[', '\\\]']],
+        processEnvironments: true
+    },
+    svg: {
+        fontCache: 'global'
+    }
+};
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <link rel="stylesheet"  href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous"> </link>
+    <script>
+
+var count_question = 0;
+var count_exclamation = 0;
+var dict = new Map();
+var confusion_dict = new Map();
+var exclamation_dict = new Map();
+
+function all_a(m) {
+  m = m.replace(/[^a-zA-Z]/g, "");
+  return /^[aA]+$/.test(m);
+}
+function all_b(m) {
+  m = m.replace(/[^a-zA-Z]/g, "");
+  return /^[bB]+$/.test(m);
+}
+function all_c(m) {
+  m = m.replace(/[^a-zA-Z]/g, "");
+  return /^[cC]+$/.test(m);
+}
+function all_d(m) {
+  m = m.replace(/[^a-zA-Z]/g, "");
+  return /^[dD]+$/.test(m);
+}
+function all_e(m) {
+  m = m.replace(/[^a-zA-Z]/g, "");
+  return /^[eE]+$/.test(m);
+}
+
+function get_minute() {
+    var d = new Date();
+    return d.toLocaleTimeString('en-GB', {hour: '2-digit', minute:'2-digit'});
+}
+
+function gmint() {
+    // Gets current minute as an integer
+    // Returns 60*hour + minute
+    var d = new Date();
+    return d.getMinutes() + 60*d.getHours();
+}
+
+function parse_message(msg) {
+    // Message has the format "Username: message"
+    var u = msg.replace(/: .*/, "");
+    u = u.replace(/[^a-zA-Z0-9]/g, "");
+    var m = msg.replace(/.*: /, "");
+
+    // Update all the barchart counters
+    if (all_a(m)) { dict.set(u, 'a')   }
+    if (all_b(m)) { dict.set(u, 'b')   }
+    if (all_c(m)) { dict.set(u, 'c')   }
+    if (all_d(m)) { dict.set(u, 'd')   }
+    if (all_e(m)) { dict.set(u, 'e')   }
+    // Update the confusion and exclamation counters
+    const t = gmint();
+    const ql = (m.match(/\?/g)||[]).length;
+    const el = (m.match(/!/g)||[]).length;
+    confusion_dict[t] = (confusion_dict[t]||0) + Math.log(ql+1);
+    exclamation_dict[t] = (exclamation_dict[t]||0) + Math.log(el+1);
+    //console.log(u + m);
+    //return u + m
+    return { name: u, message: m}
+}
+
+function update_meters() {
+    const t = gmint();
+    ConfusionMeter.data.datasets[0].data = [confusion_dict[t-10]||0, confusion_dict[t-9]||0, confusion_dict[t-8]||0, confusion_dict[t-7]||0, confusion_dict[t-6]||0, confusion_dict[t-5]||0, confusion_dict[t-4]||0, confusion_dict[t-3]||0, confusion_dict[t-2]||0, confusion_dict[t-1]||0, confusion_dict[t]||0]||0
+    ConfusionMeter.data.datasets[1].data = [exclamation_dict[t-10]||0, exclamation_dict[t-9]||0, exclamation_dict[t-8]||0, exclamation_dict[t-7]||0, exclamation_dict[t-6]||0, exclamation_dict[t-5]||0, exclamation_dict[t-4]||0, exclamation_dict[t-3]||0, exclamation_dict[t-2]||0, exclamation_dict[t-1]||0, exclamation_dict[t]||0]||0
+
+    ConfusionMeter.update();
+}
+
+function barchart_process(dict) {
+    // Parses dict to get number of a's, b's, c's, d's, and e's
+    var counts = {};
+	counts['a']=0;
+	counts['b']=0;
+	counts['c']=0;
+	counts['d']=0;
+	counts['e']=0;
+    for (x of dict.values()) {
+        counts[x] = counts[x] ? counts[x] + 1 : 1;
+    }
+	myChart.data.datasets[0].data = [counts['a'], counts['b'], counts['c'], counts['d'], counts['e']];
+	myChart.update();
+    return counts;
+}
+
+function form_string(m) {
+    return { name: username, message: m}
+}
+
+var unsafe_strings = 0;
+var entityMap = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+  '/': '&#x2F;',
+  '`': '&#x60;',
+  '=': '&#x3D;'
+};
+function sanitize(m) {
+	if (unsafe_strings==1) {
+        return m;
+    } else {
+        return String(m).replace(/[&<>"'`=\/]/g, function (s) {
+			return entityMap[s];
+		  });
+	}
+}
+function post_chat(m) {
+    socket.emit('chat_message', form_string(m));
+    var el = $('<div>').html(sanitize(m));
+    el.attr("id", "float");
+    $('#floating_container').append(el);
+    //$('#float').text(sanitize(m));
+    el.animate({ top: -100, opacity: 0}, 1000, "linear", function() {$(this).remove()});
+    return false;
+}
+
+    </script>
+  </head>
+  <body>
+	<div id="chatbox">
+      <div id="msgbox"><ul id="messages"></ul></div>
+        <div id="floating_container"></div>
+        <textarea id="txt" autocomplete="off" autofocus="on" placeholder="You can write math using MathJax $$x^2 + \frac{y_2}{5}$$; enter to send" width="85%" ></textarea>
+	<div id="quickbuttons">
+        <div class="btn-group btn-matrix" role="group">
+            <button class="btn btn-info btn-floating btn-lg " data-mdb-ripple-color="light" type="submit" name="a" value="a" onclick="post_chat('a');">a</button>
+            <button class="btn btn-primary btn-floating btn-lg " data-mdb-ripple-color="light" type="submit" name="b" value="b" onclick="post_chat('b');">b</button> 
+            <button class="btn btn-info btn-floating btn-lg " data-mdb-ripple-color="light" type="submit" name="c" value="c" onclick="post_chat('c');">c</button>
+            <button class="btn btn-primary btn-floating btn-lg " data-mdb-ripple-color="light" type="submit" name="d" value="d" onclick="post_chat('d');">d</button> 
+            <button class="btn btn-info btn-floating btn-lg " data-mdb-ripple-color="light" type="submit" name="e" value="e" onclick="post_chat('e');">e</button>
+            <button class="btn btn-danger btn-floating btn-lg" data-mdb-ripple-color="light" type="submit" name="conf" value="?" onclick="post_chat('?');">?</button> 
+            <button class="btn btn-success btn-floating btn-lg" data-mdb-ripple-color="light" type="submit" name="excl" value="!" onclick="post_chat('!');">!</button> </div>
+            <button class="btn btn-secondary btn-floating btn-lg" data-mdb-ripple-color="light" type="submit" name="enter" value="!" onclick="text_enter();">Enter</button> </div>
+</div>
+</div>
+    <script>
+
+function text_enter() {
+    var m = $('#txt').val().replace(/\r?\n|\r/g, "");
+    if (m) {
+        post_chat(m);
+        $('#txt').val('');
+        if(event.preventDefault) event.preventDefault();
+        return false;
+    }
+    return false;
+}
+
+$("#txt").keydown(function (e) {
+    if(e.which === 13 && !e.shiftKey) {
+        text_enter();
+        return false;
+    }
+});
+
+            var socket = io.connect('https://bastion.ywyu.net', {secure:true});
+
+            // append the chat text message
+            socket.on('chat_message', function(msg){
+                out = parse_message(msg);
+                elem = document.getElementById('msgbox');
+                var scrollyes = 0;
+                if (elem.scrollTop > elem.scrollHeight - elem.offsetHeight - 100) {scrollyes = 1;}
+                var el = $('<li>').html(get_minute() +  ": <span class='usernames'>" + out.name + "</span>: " + sanitize(out.message));
+                $('#messages').append(el);
+                if (out.message.length == 1 && ['a', 'A', 'b', 'B', 'c', 'C', 'd', 'D', 'e', 'E', '!', '?'].includes(out.message)) {el.addClass('singleton');}
+                if (scrollyes == 1) {elem.scrollTop = elem.scrollHeight;}
+                MathJax.typesetPromise(el);
+                if (scrollyes == 1) {elem.scrollTop = elem.scrollHeight;}
+
+            });
+
+            // append text if someone is online
+            socket.on('is_online', function(username) {
+                elem = document.getElementById('msgbox');
+                var scrollyes = 0;
+                if (elem.scrollTop > elem.scrollHeight - elem.offsetHeight - 100) {scrollyes = 1;}
+                $('#messages').append($('<li>').html(username));
+                if (scrollyes == 1) {elem.scrollTop = elem.scrollHeight;}
+            });
+
+            // ask username
+            var username = prompt('Please tell me your name');
+            username = username.replace(/[^a-zA-Z0-9]/g, "");
+            if (username === "" ) {username = "###Anon###" + Math.floor((Math.random()*100000))}
+            socket.emit('username', username);
+
+    </script>
+    <strong>Current handle:</strong> <span id="curr_user">&nbsp;</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <button onclick="$('#proftools').toggle(); $('#msgbox').css('height','20em')">Prof tools</button>
+  <br />
+
+  <script>
+function toggle_names() {
+    var sheet = $("#js_rules").get(0).sheet;
+    if (/red/.test(sheet.cssRules[0].cssText)) {
+        sheet.deleteRule(0);
+        sheet.insertRule('.usernames {background-color: transparent; }', 0);
+        $('#names_button').css('color', 'black');
+    } else {
+        sheet.deleteRule(0);
+        sheet.insertRule('.usernames {background-color: red; }', 0);
+        $('#names_button').css('color', 'red');
+    }
+}
+
+function toggle_singleton() {
+    var sheet = $("#js_rules2").get(0).sheet;
+    if (/none/.test(sheet.cssRules[0].cssText)) {
+        sheet.deleteRule(0);
+        sheet.insertRule('li.singleton {display: list-item; }', 0);
+        $('#sing_button').css('color', 'black');
+    } else {
+        sheet.deleteRule(0);
+        sheet.insertRule('li.singleton {display: none; }', 0);
+        $('#sing_button').css('color', 'red');
+    }
+    elem = document.getElementById('msgbox');
+    elem.scrollTop = elem.scrollHeight;
+}
+
+function toggle_safe() {
+	if (unsafe_strings==1) {
+		unsafe_strings = 0;
+        $('#unsafe').text("Make unsafe");
+        $('#unsafe').css('color','black');
+    } else {
+        unsafe_strings = 1;
+        $('#unsafe').text("Make safe");
+        $('#unsafe').css('color','red');
+    }
+}
+
+function toggle_input() {
+    $('#txt').toggle(); $('#quickbuttons').toggle();
+    if ($('#input_button').css('color') === 'rgb(255, 0, 0)') {
+        $('#input_button').css('color', 'black');
+    } else {
+        $('#input_button').css('color', 'red');
+    }
+}
+
+function toggle_chatbox() {
+    $('#chatbox').toggle();
+    if ($('#chat_button').css('color') === 'rgb(255, 0, 0)') {
+        $('#chat_button').css('color', 'black');
+    } else {
+        $('#chat_button').css('color', 'red');
+    }
+}
+  </script>
+<div id="proftools">
+<!--<button onclick="$('#messages').empty();">Clear chat</button>-->
+  <button onclick="dict.clear();">Zero</button>
+  <button id="chat_button" onclick="toggle_chatbox();">Chat</button>
+  <button id="input_button" onclick="toggle_input();">Input</button>
+  <!--<button onclick="$('#quickbuttons').toggle();">Quick</button>
+  <button onclick="$('#txt').toggle();">Input</button>-->
+  <button id="names_button" onclick="toggle_names();">Names</button>
+  <button id="sing_button" onclick="toggle_singleton();">1-char</button>
+  <!--<button id="unsafe" onclick="toggle_safe();">Make unsafe</button>-->
+  <!--<button onclick="$('.usernames').css('background-color', '');">Show names</button>-->
+    <div>
+        <canvas id="confusionMeter" width="300" height="200"></canvas>
+    </div>
+    <div>
+        <canvas id="myChart" width="300" height="200"></canvas>
+    </div>
+<script>
+  Chart.defaults.font.size = 14;
+  var ctx = document.getElementById("myChart");
+  var myChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ["A", "B", "C", "D", "E"],
+      datasets: [{
+        //label: '# of Votes',
+        data: [0, 0, 0, 0, 0],
+        backgroundColor: [
+          'rgba(255, 99, 132, 0.5)',
+          'rgba(255, 206, 86, 0.5)',
+          'rgba(75, 192, 192, 0.5)',
+          'rgba(54, 162, 235, 0.5)',
+          'rgba(153, 102, 255, 0.5)',
+        ],
+        borderColor: [
+          'rgba(255,99,132,1)',
+          'rgba(255, 206, 86, 1)',
+          'rgba(75, 192, 192, 1)',
+          'rgba(54, 162, 235, 1)',
+          'rgba(153, 102, 255, 1)',
+        ],
+        borderWidth: 1
+      }]
+    },
+    options: {
+      plugins: {legend: {display: false, },},
+      animation: 0,
+      responsive: false,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          suggestedMin: 0,
+          suggestedMax: 10,
+          grid: {drawOnChartArea: false, borderColor: 'rgb(0,0,0)'}
+        },
+        x: {
+          grid: {drawOnChartArea: false, borderColor: 'rgb(0,0,0)'}
+        }
+      }
+    }
+  });
+
+var intervalId = window.setInterval(function(){
+  barchart_process(dict);
+}, 1000);
+/* To stop: clearINterval(intervalId) */
+
+</script>
+<script>
+const labels = [
+  '-10',
+  '-9',
+  '-8',
+  '-7',
+  '-6',
+  '-5',
+  '-4',
+  '-3',
+  '-2',
+  '-1',
+  '0',
+];
+const data = {
+  labels: labels,
+  datasets: [{
+    label: 'Confusion',
+    backgroundColor: 'rgb(255, 99, 132)',
+    borderColor: 'rgb(255, 99, 132)',
+    data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  },{
+    label: 'Excitement',
+    backgroundColor: 'rgb(132, 99, 255)',
+    borderColor: 'rgb(132, 99, 255)',
+    data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  },
+  ]
+};
+const config = {
+  type: 'line',
+  data,
+options: {
+  animation: 0,
+  responsive: false,
+  maintainAspectRatio: false,
+  scales: {
+    y: {
+      suggestedMin: 0,
+      suggestedMax: 10,
+      grid: {drawOnChartArea: false, borderColor: 'rgb(0,0,0)'}
+    },
+    x: {
+      grid: {drawOnChartArea: false, borderColor: 'rgb(0,0,0)'}
+    }
+  },
+}
+};
+var ConfusionMeter = new Chart(
+  document.getElementById('confusionMeter'),
+  config,
+);
+var intervalId2 = window.setInterval(function(){
+  update_meters();
+}, 1000);
+/* To stop: clearINterval(intervalId2) */
+</script>
+</div>
+<script>
+$('#proftools').toggle();
+$('#curr_user').text(username);
+</script>
+  </body>
+</html>
