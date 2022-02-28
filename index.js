@@ -15,8 +15,9 @@ io.sockets.on('connection', function(socket) {
     });
 
     socket.on('chat_message', function(message) {
+        let curr_time = Math.floor(new Date().getTime() / 1000)
         io.emit('chat_message', message.name + ": " + message.message);
-        console.log(socket.request.connection.remoteAddress + "/" + socket.handshake.headers["x-real-ip"] + ': ' + message.name + ": " + message.message.replace(/(\r\n|\r|\n)/g, '\\n'));
+        console.log(curr_time + ": " + socket.request.connection.remoteAddress + "/" + socket.handshake.headers["x-real-ip"] + ': ' + message.name + ": " + message.message.replace(/(\r\n|\r|\n)/g, '\\n'));
     });
 
 });
